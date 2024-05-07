@@ -8,20 +8,34 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 from PIL import Image
-import io
+import os
 
-import google.generativeai as genai
+# To install the Python SDK, use this CLI command:
+# pip install google-cloud-aiplatform
 
-# WARNING: Do not share code with you API key hard coded in it.
-# Get your Gemini API key from: https://aistudio.google.com/app/apikey
-GOOGLE_API_KEY=""
-genai.configure(api_key=GOOGLE_API_KEY)
+import vertexai
+from vertexai.generative_models import GenerativeModel, Image
+
+PROJECT_ID = "gemini-api-quickstart"
+REGION = "us-central1"  # e.g. us-central1
+
+vertexai.init(project=PROJECT_ID, location=REGION)
+        
 
 # The rate limits are low on this model, so you might need to switch to `gemini-pro`
-model = genai.GenerativeModel('gemini-1.5-pro-latest')
+model = GenerativeModel('gemini-1.5-pro-preview-0409')
 
 app = Flask(__name__)
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
+UPLOAD_FOLDER = 'uploads' 
+if not os.path.exists(UPLOAD_FOLDER):
+    # Create the directory
+    os.makedirs(UPLOAD_FOLDER)
+    print(f"Directory '{UPLOAD_FOLDER}' created.")
+else:
+    print(f"Directory '{UPLOAD_FOLDER}' already exists.")
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 chat_session = model.start_chat(history=[])
 next_message = ""
@@ -33,7 +47,6 @@ def allowed_file(filename):
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
-    """Takes in a file, checks if it is valid, and saves it for the next request to the API"""
     global next_image
 
     if "file" not in request.files:
@@ -45,11 +58,15 @@ def upload_file():
         return jsonify(success=False, message="No selected file")
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        
+        file.save(file_path)  # Save file to disk
 
-        # Read the file stream into a BytesIO object
-        file_stream = io.BytesIO(file.read())
-        file_stream.seek(0)
-        next_image = Image.open(file_stream)
+        try:
+            # Load the image from the saved file
+            next_image = Image.load_from_file(file_path)
+        except Exception as e:
+            return jsonify(success=False, message=f"Failed to load image file: {str(e)}")
 
         return jsonify(
             success=True,
@@ -93,3 +110,6 @@ def stream():
             yield f"data: {chunk.text}\n\n"
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream")
+
+if __name__ == '__main__':
+    app.run(debug=True)
